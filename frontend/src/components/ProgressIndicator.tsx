@@ -34,7 +34,7 @@ export default function ProgressIndicator({
     { title: "Importing Transactions", icon: Compass, desc: "Reading and structuring secure ledger flows..." },
     { title: "Categorizing Spending Activity", icon: Layers, desc: "Structuring transactions into essential and discretionary buckets..." },
     { title: "Detecting Financial Patterns", icon: Cpu, desc: "Identifying recurring outlets, timing clumps, and comfort leaks..." },
-    { title: "Computing Behavioral Signals", icon: Activity, desc: "Calculating temporal consistency and confidence scores..." },
+    { title: "Computing Behavioral Signals", icon: Activity, desc: "Calculating temporal consistency and impact levels..." },
     { title: "Generating Intelligence Report", icon: Sparkles, desc: "Formatting the final interactive diagnostic dashboard..." },
   ];
 
