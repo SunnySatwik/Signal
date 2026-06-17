@@ -1,3 +1,5 @@
+// ─── Existing UI types ────────────────────────────────────────────────────────
+
 export interface Transaction {
   id: string;
   date: string;
@@ -50,4 +52,35 @@ export interface AIInsight {
   riskImpact: string;
   suggestedActions: string[];
   additionalInsights?: string;
+}
+
+// ─── Backend API types ────────────────────────────────────────────────────────
+
+/** Transaction payload sent to POST /analyze */
+export interface ApiTransaction {
+  amount: number;
+  merchant: string;
+  category: string;
+  timestamp: string; // ISO 8601 e.g. "2026-06-12T22:45:00"
+}
+
+/** Single behavioral signal returned by the backend */
+export interface ApiSignal {
+  signal: string;
+  confidence: number; // 0.0–1.0
+  details: string;
+}
+
+/** Full response from POST /analyze */
+export interface ApiAnalysisResponse {
+  key_finding: string;
+  signals: ApiSignal[];
+  report: string;
+}
+
+/** Shape of records returned by GET /reports */
+export interface ApiReport {
+  id: number;
+  report: string;
+  created_at: string;
 }

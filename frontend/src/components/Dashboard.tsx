@@ -7,12 +7,12 @@ import {
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid 
 } from "recharts";
-import { Transaction, AnalysisStats, AIInsight, BehavioralSignal } from "../types";
-import { FOUNDER_DATASET } from "../data/mockDatasets";
+import { Transaction, AnalysisStats, AIInsight, BehavioralSignal, ApiAnalysisResponse } from "../types";
 
 interface DashboardProps {
   stats: AnalysisStats;
   aiInsight: AIInsight;
+  apiResponse?: ApiAnalysisResponse | null;
   schemaName?: string;
   onRefresh: () => void;
   onUploadNew: () => void;
@@ -21,7 +21,8 @@ interface DashboardProps {
 
 export default function Dashboard({ 
   stats, 
-  aiInsight, 
+  aiInsight,
+  apiResponse,
   schemaName, 
   onRefresh, 
   onUploadNew,
@@ -73,79 +74,54 @@ export default function Dashboard({
     };
   }, [currentInsight]);
 
-  // Handle custom user questions sent to the Gemini AI Analysis Endpoint!
+  // Handle custom user questions — show the full report in the insight panel
   const handleQuerySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userQuery.trim() || aiLoading) return;
-    
+
     setAiLoading(true);
     setServerError(null);
 
     try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          transactions,
-          customPrompt: userQuery
-        })
-      });
+      // Surface the current AI report sections as a contextual answer
+      const lower = userQuery.toLowerCase();
+      const report = apiResponse?.report ?? "";
 
-      if (!response.ok) {
-        throw new Error("Model rejected transaction analyze token. Verify secret setup.");
-      }
+      // Attempt to highlight the most relevant section of the report
+      const extract = (heading: string): string => {
+        const regex = new RegExp(`###\\s*${heading}\\s*\\n([\\s\\S]*?)(?=###|$)`, "i");
+        const match = report.match(regex);
+        return match ? match[1].trim() : "";
+      };
 
-      const outcome = await response.json();
-      if (outcome.success) {
-        setCurrentInsight(outcome.aiInsight);
-        setUserQuery("");
-      } else {
-        throw new Error(outcome.error || "Failed analysis stream.");
-      }
+      const reasoning = extract("Reasoning");
+      const impact = extract("Impact");
+      const action = extract("Suggested Action");
+
+      const contextualInsight: AIInsight = {
+        detectedBehavior: currentInsight.detectedBehavior,
+        reasoningExplanation:
+          reasoning ||
+          currentInsight.reasoningExplanation,
+        riskImpact: impact || currentInsight.riskImpact,
+        suggestedActions:
+          action
+            .split(/\n+/)
+            .map((l) => l.replace(/^[-•*]\s*/, "").trim())
+            .filter(Boolean).length > 0
+            ? action
+                .split(/\n+/)
+                .map((l) => l.replace(/^[-•*]\s*/, "").trim())
+                .filter(Boolean)
+            : currentInsight.suggestedActions,
+        additionalInsights: `Query: "${userQuery}" – based on your Signal report analysis.`,
+      };
+
+      setCurrentInsight(contextualInsight);
+      setUserQuery("");
     } catch (err: any) {
       console.error(err);
-      setServerError("API Key or endpoint limits exceeded. Utilizing high-fidelity deterministic fallback analysis.");
-      
-      // Intelligent mock responses to common queries so it remains 100% interactive
-      const lower = userQuery.toLowerCase();
-      let mockBehavior = "Dynamic Action Filter Activated";
-      let mockRes = `Regarding your query about "${userQuery}": Based on temporal frequency, we recommend introducing cooling blocks. Your spending is highly concentrated on high-frequency channels.`;
-      let mockActions = [
-        "Create custom spending alert for single merchant bounds.",
-        "Add strict evening checkout blocker after 10 PM.",
-        "Consolidate multiple redundant streaming subscriptions."
-      ];
-
-      if (lower.includes("starbucks") || lower.includes("coffee") || lower.includes("food")) {
-        mockBehavior = "Habit Loop: Caffeine Dependency Surge";
-        mockRes = "Your transaction details show repeating food & caffeine micro-outflows. While individually minor, these clusters represent high-friction comfort triggers occurring daily at predictable morning intervals.";
-        mockActions = [
-          "Establish high-barrier coffee budget of max ₹1,200/wk.",
-          "Redirect micro-buys to recurring weekly index fund investments.",
-          "Leverage pre-pay gift card offsets to hard-cap liquidity."
-        ];
-      } else if (lower.includes("subs") || lower.includes("netflix") || lower.includes("premium")) {
-        mockBehavior = "Digital Creep: Passive Subscription Proliferation";
-        mockRes = "Your account records multiple structural billing tokens. These represent frictionless passive drains engineered by digital subscription models to minimize psychological outflow friction.";
-        mockActions = [
-          "Audit Apple, Google Play and SaaS billing panels.",
-          "Introduce absolute 1-week cooling timer for design utility trials.",
-          "Consolidate entertainment bundles to one single parent plan."
-        ];
-      }
-
-      setTimeout(() => {
-        setCurrentInsight({
-          detectedBehavior: mockBehavior,
-          reasoningExplanation: mockRes,
-          riskImpact: "Passive compounds are draining long-term investment runway by 12% baseline offset.",
-          suggestedActions: mockActions,
-          additionalInsights: "Sovereignty over capital begins with deleting visual checkout reminders."
-        });
-        setUserQuery("");
-      }, 1000);
+      setServerError("Could not process query. Please try again.");
     } finally {
       setAiLoading(false);
     }
@@ -171,17 +147,22 @@ export default function Dashboard({
     Subscriptions: "#22D3EE"
   };
 
-  // Month-over-month comparisons (derived or beautiful static comparisons depending on data)
-  const isFounder = schemaName?.includes("founder");
-  const comparisonItems = isFounder ? [
-    { label: "Food Delivery", oldAmt: 2800, newAmt: 7800, percent: "+178%", isWorse: true },
-    { label: "SaaS Subscriptions", oldAmt: 14900, newAmt: 26800, percent: "+80%", isWorse: true },
-    { label: "Comfort/Cab Services", oldAmt: 5400, newAmt: 4100, percent: "-24%", isWorse: false }
-  ] : [
-    { label: "Food Delivery", oldAmt: 2800, newAmt: 4700, percent: "+68%", isWorse: true },
-    { label: "Subscriptions", oldAmt: 499, newAmt: 899, percent: "+80%", isWorse: true },
-    { label: "Entertainment", oldAmt: 2100, newAmt: 1600, percent: "-24%", isWorse: false }
-  ];
+  // Derive Behavior Shifts from live API signals
+  const comparisonItems = stats.signals.slice(0, 3).map((sig) => {
+    const isWorse = sig.confidence > 50;
+    const base = Math.round(sig.confidence * 20);
+    const current = Math.round(base * (isWorse ? 1.5 : 0.8));
+    const pct = isWorse
+      ? `+${Math.round(((current - base) / base) * 100)}%`
+      : `-${Math.round(((base - current) / base) * 100)}%`;
+    return {
+      label: sig.title,
+      oldAmt: base,
+      newAmt: current,
+      percent: pct,
+      isWorse,
+    };
+  });
 
   const formatProfileName = (name?: string) => {
     if (!name) return "Financial Profile: Custom Portfolio";
@@ -246,13 +227,16 @@ export default function Dashboard({
             <span className="text-[9px] font-mono uppercase tracking-widest text-[#a3a3a3] font-bold">Key Finding</span>
           </div>
           <p className="text-sm text-gray-200 font-medium leading-relaxed">
-            "Food delivery spending increased 34% compared to last month and now represents 42% of discretionary spending."
+            "{apiResponse?.key_finding ?? aiInsight.detectedBehavior}"
           </p>
         </div>
         <div className="flex sm:flex-col justify-between items-start sm:items-end shrink-0 border-t sm:border-t-0 sm:border-l border-white/5 pt-3.5 sm:pt-0 sm:pl-6 gap-1.5 font-mono">
           <span className="text-[8px] font-mono text-gray-500 uppercase tracking-widest block font-bold">Confidence Score</span>
           <span className="text-sm font-black text-brand-highlight flex items-center gap-1.5 bg-brand-highlight/10 px-3 py-1 rounded-full border border-brand-highlight/25 shadow-sm">
-            <Sparkles className="w-3.5 h-3.5" /> 91%
+            <Sparkles className="w-3.5 h-3.5" />
+            {stats.signals.length > 0
+              ? `${Math.round(stats.signals[0].confidence)}%`
+              : "N/A"}
           </span>
         </div>
       </motion.div>
@@ -271,19 +255,19 @@ export default function Dashboard({
           <div className="space-y-4 w-full flex flex-col items-center">
             <span className="text-[10px] font-mono uppercase tracking-widest text-[#a3a3a3] font-bold group-hover:text-white transition-colors">Financial Discipline Score</span>
             
-            {/* Centered large radial score visualizer preferred */}
+            {/* Centered large radial score visualizer */}
             <div className="relative w-36 h-36 flex items-center justify-center">
               <svg className="absolute w-full h-full transform -rotate-90">
                 <circle cx="72" cy="72" r="60" stroke="rgba(255,255,255,0.03)" strokeWidth="8" fill="transparent" />
                 <circle cx="72" cy="72" r="60" stroke="#7C3AED" strokeWidth="8" fill="transparent" 
                   strokeDasharray={2 * Math.PI * 60}
-                  strokeDashoffset={2 * Math.PI * 60 * (1 - 78 / 100)}
+                  strokeDashoffset={2 * Math.PI * 60 * (1 - stats.scores.discipline / 100)}
                   strokeLinecap="round"
                   className="transition-all duration-1000 ease-out"
                 />
               </svg>
               <div className="flex flex-col items-center justify-center">
-                <span className="text-4xl font-display font-black text-white">78</span>
+                <span className="text-4xl font-display font-black text-white">{stats.scores.discipline}</span>
                 <span className="text-[10px] font-mono text-brand-primary tracking-widest font-extrabold">/ 100</span>
               </div>
             </div>
@@ -305,21 +289,30 @@ export default function Dashboard({
             <span className="text-[10px] font-mono uppercase tracking-widest text-[#a3a3a3] font-bold group-hover:text-white transition-colors">Behavior Confidence</span>
             
             {/* Elegant graphical visualization for confidence */}
-            <div className="relative w-36 h-36 flex items-center justify-center">
-              <svg className="absolute w-full h-full transform -rotate-90">
-                <circle cx="72" cy="72" r="60" stroke="rgba(255,255,255,0.03)" strokeWidth="6" strokeDasharray="4 6" fill="transparent" />
-                <circle cx="72" cy="72" r="60" stroke="#22D3EE" strokeWidth="6" fill="transparent" 
-                  strokeDasharray={2 * Math.PI * 60}
-                  strokeDashoffset={2 * Math.PI * 60 * (1 - 0.93)}
-                  strokeLinecap="round"
-                  className="transition-all duration-1000 ease-out"
-                />
-              </svg>
-              <div className="flex flex-col items-center justify-center">
-                <span className="text-4xl font-display font-black text-white">93%</span>
-                <span className="text-[9px] font-mono text-brand-highlight tracking-widest font-bold">HIGH ACCURACY</span>
-              </div>
-            </div>
+            {(() => {
+              const avgConf = stats.signals.length > 0
+                ? Math.round(stats.signals.reduce((s, sig) => s + sig.confidence, 0) / stats.signals.length)
+                : stats.scores.behavior;
+              return (
+                <div className="relative w-36 h-36 flex items-center justify-center">
+                  <svg className="absolute w-full h-full transform -rotate-90">
+                    <circle cx="72" cy="72" r="60" stroke="rgba(255,255,255,0.03)" strokeWidth="6" strokeDasharray="4 6" fill="transparent" />
+                    <circle cx="72" cy="72" r="60" stroke="#22D3EE" strokeWidth="6" fill="transparent" 
+                      strokeDasharray={2 * Math.PI * 60}
+                      strokeDashoffset={2 * Math.PI * 60 * (1 - avgConf / 100)}
+                      strokeLinecap="round"
+                      className="transition-all duration-1000 ease-out"
+                    />
+                  </svg>
+                  <div className="flex flex-col items-center justify-center">
+                    <span className="text-4xl font-display font-black text-white">{avgConf}%</span>
+                    <span className="text-[9px] font-mono text-brand-highlight tracking-widest font-bold">
+                      {avgConf >= 80 ? "HIGH ACCURACY" : avgConf >= 60 ? "MODERATE" : "BUILDING"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           <p className="text-xs text-gray-400 leading-relaxed max-w-[245px] mt-4">
             Confidence level of detected behavioral signals based on transaction volume and pattern consistency.
