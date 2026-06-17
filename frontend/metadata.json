@@ -1,0 +1,6 @@
+{
+  "name": "SIGNAL",
+  "description": "An AI-powered Financial Behavior Intelligence Platform that reveals the spending patterns shaping your money before they become habits.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
