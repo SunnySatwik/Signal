@@ -42,8 +42,9 @@ Signal solves this by implementing a structured, two-layer analysis pipeline:
 ### Landing Page
 
 ![Landing-Page](image.png)
-Description:
-Initial upload and dataset selection experience.
+
+### Initial upload and dataset selection experience.
+![Upload-screen](image-1.png)
 
 ### Analysis Dashboard
 
