@@ -143,16 +143,49 @@ function deriveLocalStats(
   const savingsAmount = Math.max(0, totalIncome - totalSpent);
   const savingsRate = totalIncome > 0 ? savingsAmount / totalIncome : 0;
 
-  // Discipline score: affected by savings rate and signal confidence
-  const avgConfidence =
-    signals.length > 0
-      ? signals.reduce((sum, s) => sum + s.confidence, 0) / signals.length
-      : 0;
+  // ─── Discipline Score ────────────────────────────────────────────────────
+  // Signal-severity-based model. Healthy profiles (no signals or minor
+  // subscription only) score 70–85. Moderate risk scores 45–70.
+  // High-risk patterns (concentration, dependence, or 3+ signals) go below 45.
+  //
+  // Penalty weights per signal type:
+  //   Category Concentration  → up to -25 (scaled by confidence)
+  //   Merchant Dependence     → up to -20
+  //   Late-Night Spending     → up to -18
+  //   Weekend Overspending    → up to -15
+  //   Subscription Creep      → up to -10 (minor by itself)
+  //   Unknown / Other         → up to -12
+  //
+  // Multi-signal compounding: each signal beyond the first adds an extra -5.
+  // Savings rate contributes a small bonus capped at +8.
 
-  let disciplineScore = 55;
-  disciplineScore += Math.min(savingsRate * 40, 40);
-  disciplineScore -= Math.min((avgConfidence / 100) * 20, 20);
-  disciplineScore = Math.min(100, Math.max(10, Math.round(disciplineScore)));
+  const SIGNAL_MAX_PENALTY: Record<string, number> = {
+    "Category Concentration": 25,
+    "Merchant Dependence": 20,
+    "Late-Night Spending": 18,
+    "Weekend Overspending": 15,
+    "Subscription Creep": 10,
+  };
+
+  let disciplineScore = 85; // clean-profile baseline
+
+  // Per-signal penalty scaled by confidence (0–1 from backend)
+  signals.forEach((sig, idx) => {
+    const maxPenalty = SIGNAL_MAX_PENALTY[sig.title] ?? 12;
+    const confidenceFraction = sig.confidence / 100; // confidence stored as 0–100 here
+    const penalty = Math.round(maxPenalty * confidenceFraction);
+    disciplineScore -= penalty;
+
+    // Compounding penalty for each additional signal beyond the first
+    if (idx >= 1) {
+      disciplineScore -= 5;
+    }
+  });
+
+  // Minor savings-rate bonus (max +8) — supplement, not driver
+  disciplineScore += Math.round(Math.min(savingsRate * 8, 8));
+
+  disciplineScore = Math.min(100, Math.max(5, Math.round(disciplineScore)));
 
   let behaviorScore = 85;
   behaviorScore -= Math.min(signals.length * 5, 30);
@@ -183,11 +216,11 @@ function deriveLocalStats(
       behavior: behaviorScore,
       discipline: disciplineScore,
       trend:
-        disciplineScore >= 75
-          ? "Excellent"
-          : disciplineScore >= 60
-          ? "Stable"
-          : "Requires Insight",
+        disciplineScore >= 70
+          ? "Healthy"
+          : disciplineScore >= 45
+          ? "Moderate Risk"
+          : "High Risk",
     },
     signals,
     categoryBreakdown: categorySpent,

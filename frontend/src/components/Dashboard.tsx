@@ -131,13 +131,15 @@ export default function Dashboard({
   // Build discipline score driver bullets from detected signals
   const scoreDrivers: string[] = displaySignals.slice(0, 3).map((sig) => {
     const lower = sig.title.toLowerCase();
-    if (lower.includes("category")) return "High category concentration";
+    if (lower.includes("category")) return "High spending concentration";
     if (lower.includes("merchant")) return "Single-merchant dependence";
-    if (lower.includes("subscription")) return "Multiple active subscriptions";
+    if (lower.includes("subscription"))
+      return sig.confidence >= 65 ? "High subscription load" : "Active subscription services";
     if (lower.includes("night")) return "Late-night spending pattern";
     if (lower.includes("weekend")) return "Weekend overspending";
     return sig.title;
   });
+
 
   const lineSeriesKeys = ["Food", "Entertainment", "Shopping", "Subscriptions"];
   const chartColors: Record<string, string> = {
