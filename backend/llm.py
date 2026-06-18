@@ -166,29 +166,127 @@ _DEFAULT_FALLBACK = {
 
 def _generate_fallback_report(signals: List[Dict[str, Any]]) -> Dict[str, str]:
     """
-    Generate a human-sounding financial report without calling the Gemini API.
-    Uses per-signal templates, falling back to a default when no signals detected.
+    Generate a data-driven, human-sounding fallback report.
+    Extracts actual numbers from signal detail strings for specificity.
     """
     if not signals:
         template = _DEFAULT_FALLBACK
-    else:
-        top_signal_name = signals[0].get("signal", "")
-        template = _FALLBACK_TEMPLATES.get(top_signal_name, _DEFAULT_FALLBACK)
+        kf = template["key_finding"]
+        reasoning = template["reasoning"]
+        impact = template["impact"]
+        action = template["suggested_action"]
+        report_md = (
+            f"### Key Finding\n{kf}\n\n"
+            f"### Reasoning\n{reasoning}\n\n"
+            f"### Impact\n{impact}\n\n"
+            f"### Suggested Action\n{action}"
+        )
+        return {"key_finding": kf, "report": report_md}
 
-    kf = template["key_finding"]
-    reasoning = template["reasoning"]
+    top = signals[0]
+    top_name = top.get("signal", "")
+    top_details = top.get("details", "")
 
-    # If multiple signals, briefly mention others in the reasoning
-    if len(signals) > 1:
-        other_signals = [s.get("signal", "") for s in signals[1:3]]
-        others_str = " and ".join(other_signals)
-        reasoning += (
-            f" Additionally, the analysis identified {others_str}, "
-            f"which may compound the primary finding."
+    # Build signal index for cross-referencing
+    signal_names = [s.get("signal", "") for s in signals]
+    has_merchant = any("Merchant" in n for n in signal_names)
+    has_subscription = any("Subscription" in n for n in signal_names)
+    has_late_night = any("Late" in n for n in signal_names)
+    has_weekend = any("Weekend" in n for n in signal_names)
+
+    # Use the top signal's details as the basis for the key finding
+    # Craft specific language using the details string directly
+    if top_name == "Category Concentration":
+        kf = (
+            f"A single spending category is consuming a disproportionate share of total expenses — "
+            f"review the details below for exact figures."
+        )
+        reasoning = top_details
+        if has_merchant:
+            merchant_details = next(
+                (s.get("details", "") for s in signals if "Merchant" in s.get("signal", "")), ""
+            )
+            reasoning += f" This aligns with the merchant concentration finding: {merchant_details}"
+        impact = (
+            "When a single category absorbs this share of spending, it leaves little room "
+            "to absorb unexpected costs or redirect money toward savings."
+        )
+        action = (
+            "Review your last 30 days of spending in this category, identify the top 3 recurring "
+            "merchants, and set a hard monthly cap for each."
         )
 
-    impact = template["impact"]
-    action = template["suggested_action"]
+    elif top_name == "Merchant Dependence":
+        kf = (
+            "A single merchant dominates transaction frequency — "
+            "this level of reliance warrants closer attention."
+        )
+        reasoning = top_details
+        if has_subscription:
+            sub_details = next(
+                (s.get("details", "") for s in signals if "Subscription" in s.get("signal", "")), ""
+            )
+            reasoning += f" Subscription services are also a contributing factor: {sub_details}"
+        impact = (
+            "Repeated use of a single platform typically incurs premium delivery fees, "
+            "surge charges, and convenience markups that wouldn't apply to alternatives."
+        )
+        action = (
+            "Identify the top merchant from the signal above and try replacing a portion of "
+            "those orders with lower-cost alternatives or home preparation over the next two weeks."
+        )
+
+    elif top_name == "Late-Night Spending":
+        kf = "A significant portion of transactions occurred during late-night hours, adding to total spend."
+        reasoning = top_details
+        impact = (
+            "Late-night purchases — particularly food delivery — often carry higher delivery fees "
+            "and surge pricing compared to daytime equivalents."
+        )
+        action = (
+            "Review the late-night transactions in detail and identify how many were truly "
+            "necessary. Consider preparing meals in advance to reduce reliance on late-night delivery."
+        )
+
+    elif top_name == "Subscription Creep":
+        kf = "Multiple active subscription services are creating a recurring monthly outflow."
+        reasoning = top_details
+        impact = (
+            "Subscription costs are easy to overlook because they feel small in isolation, "
+            "but the aggregate figure can represent a meaningful fixed commitment each month."
+        )
+        action = (
+            "List all active subscriptions identified above and cancel any not used in the past month. "
+            "Consider pausing rather than maintaining multiple streaming services simultaneously."
+        )
+
+    elif top_name == "Weekend Overspending":
+        kf = "Weekend spending is consistently higher than weekday spending on a per-day basis."
+        reasoning = top_details
+        impact = (
+            "Recurring weekend overspending can cancel out savings accumulated during the week, "
+            "making it difficult to build a surplus month over month."
+        )
+        action = (
+            "Set a specific daily spending limit for weekends and review your last four "
+            "weekends to understand which categories are driving the gap."
+        )
+
+    else:
+        template = _FALLBACK_TEMPLATES.get(top_name, _DEFAULT_FALLBACK)
+        kf = template["key_finding"]
+        reasoning = template["reasoning"]
+        impact = template["impact"]
+        action = template["suggested_action"]
+
+    # Append secondary signal context if multiple signals detected
+    secondary = [s for s in signals[1:] if s.get("signal", "") != top_name]
+    if secondary:
+        secondary_names = " and ".join(s.get("signal", "") for s in secondary[:2])
+        reasoning += (
+            f" The analysis also detected {secondary_names}, "
+            f"which may be contributing to the same underlying spending pressure."
+        )
 
     report_md = (
         f"### Key Finding\n{kf}\n\n"
@@ -230,24 +328,27 @@ def generate_financial_report(signals: List[Dict[str, Any]]) -> Dict[str, str]:
     )
 
     prompt = f"""You are a financial behavior analyst reviewing a client's recent transaction data.
-Your job is to write a concise, professional report based on the behavioral signals listed below.
+Your job is to write a precise, evidence-based report using the data from the detected signals below.
 
 Detected Signals:
 {signals_summary}
 
-Instructions:
-- Write as a financial analyst, not as an AI assistant.
-- Reference the specific signals and explain how they relate to each other.
-- Avoid generic advice like "create a budget" — make recommendations specific to what was detected.
-- Do not use buzzwords, psychological claims, or dramatic language.
-- Keep the entire report under 150 words total across all sections.
-- Return your response as JSON matching the required schema.
+Critical instructions:
+- Quote ACTUAL numbers from the signals above: percentages, rupee amounts, transaction counts, merchant names.
+  Example: "Swiggy represents 41% of all transactions and ₹25,688 in spending" — not vague statements.
+- Write like a financial analyst who has reviewed the data — professional, direct, no buzzwords.
+- Explain how the signals RELATE to each other if multiple are detected.
+- The recommended action must be specific to the top merchant/category/signal found — not generic.
+- Do NOT say "create a budget", "track expenses", or use phrases like "financial wellness".
+- Do NOT make psychological assumptions about why the user spends this way.
+- Keep the entire report under 150 words total.
+- Return response as JSON matching the schema.
 
 The report must include:
-1. key_finding – One sentence naming the most important spending pattern.
-2. reasoning – 2–3 sentences explaining what the data shows and why it matters.
-3. impact – 1–2 sentences on the realistic financial consequence of this pattern.
-4. suggested_action – One specific, actionable recommendation for this week.
+1. key_finding – One clear sentence with actual figures from the data.
+2. reasoning – 2–3 sentences referencing specific merchants, categories, percentages, and counts.
+3. impact – 1–2 sentences on the realistic financial consequence.
+4. suggested_action – One actionable recommendation referencing the specific merchant/category identified.
 """
 
     try:

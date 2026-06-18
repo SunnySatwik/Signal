@@ -125,8 +125,19 @@ export default function Dashboard({
   // Category spending distribution (share-based, not MoM delta)
   const spendingDistribution = deriveSpendingDistribution(stats);
 
-  // Only show chart when there's enough time-series data
-  const shouldShowChart = hasEnoughChartData(stats.timeline);
+  // Chart is intentionally disabled for MVP – keep code for future use
+  const shouldShowChart = false;
+
+  // Build discipline score driver bullets from detected signals
+  const scoreDrivers: string[] = displaySignals.slice(0, 3).map((sig) => {
+    const lower = sig.title.toLowerCase();
+    if (lower.includes("category")) return "High category concentration";
+    if (lower.includes("merchant")) return "Single-merchant dependence";
+    if (lower.includes("subscription")) return "Multiple active subscriptions";
+    if (lower.includes("night")) return "Late-night spending pattern";
+    if (lower.includes("weekend")) return "Weekend overspending";
+    return sig.title;
+  });
 
   const lineSeriesKeys = ["Food", "Entertainment", "Shopping", "Subscriptions"];
   const chartColors: Record<string, string> = {
@@ -199,22 +210,33 @@ export default function Dashboard({
               <span className="text-[9px] font-mono text-brand-primary tracking-widest">/ 100</span>
             </div>
           </div>
-          <div className="space-y-1.5 flex-1">
+          <div className="space-y-2 flex-1">
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-mono uppercase tracking-widest text-gray-500">
                 Financial Discipline Score
               </span>
               <span
                 className="text-gray-400 hover:text-white cursor-help text-xs"
-                title="Calculated using:&#10;• Spending consistency&#10;• Merchant concentration&#10;• Recurring subscriptions&#10;• Spending distribution"
+                title="Calculated using spending concentration, merchant dependence, subscription load, and spending consistency."
               >
                 ⓘ
               </span>
             </div>
-            <p className="text-sm font-bold text-white">{stats.scores.trend}</p>
-            <p className="text-xs text-gray-400 leading-relaxed">
-              Based on spending consistency, merchant concentration, and recurring patterns.
-            </p>
+            {scoreDrivers.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-[9px] font-mono uppercase tracking-widest text-gray-600">Affected by</p>
+                <ul className="space-y-0.5">
+                  {scoreDrivers.map((driver, i) => (
+                    <li key={i} className="flex items-center gap-1.5">
+                      <span className="w-1 h-1 rounded-full bg-brand-warning/70 shrink-0" />
+                      <span className="text-xs text-gray-300">{driver}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="text-sm font-bold text-white">{stats.scores.trend}</p>
+            )}
           </div>
         </motion.div>
 
@@ -244,13 +266,13 @@ export default function Dashboard({
           </div>
           <div className="space-y-1.5 flex-1">
             <span className="text-[10px] font-mono uppercase tracking-widest text-gray-500 block">
-              Signals Detected
+              Patterns Identified
             </span>
             <p className="text-sm font-bold text-white">
-              {stats.signals.length} {stats.signals.length === 1 ? "Signal" : "Signals"} Detected
+              {stats.signals.length} Behavioral {stats.signals.length === 1 ? "Pattern" : "Patterns"} Detected
             </p>
             <p className="text-xs text-gray-400 leading-relaxed">
-              Behavioral patterns identified from uploaded transactions.
+              Spending behaviors identified from transaction data analysis.
             </p>
           </div>
         </motion.div>
