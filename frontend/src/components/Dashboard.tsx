@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { motion } from "motion/react";
 import {
   Moon, Repeat, Zap, Building, Sparkles,
-  ArrowDown, ArrowUp, RefreshCw, UploadCloud,
+  RefreshCw, UploadCloud,
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -59,70 +59,44 @@ function formatProfileName(name?: string): string {
   return name.replace(".json", "").replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Derive actual category-based spending changes from transactions
-function deriveActualCategoryChanges(transactions: Transaction[]) {
-  if (transactions.length === 0) return [];
+// Derive category spending as % share of total spend
+function deriveSpendingDistribution(stats: AnalysisStats) {
+  const breakdown = stats.categoryBreakdown;
+  const total = Object.values(breakdown).reduce((s, v) => s + v, 0);
+  if (total === 0) return [];
 
-  const sorted = [...transactions]
-    .filter(t => t.category !== "Income" && t.amount > 0)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-  if (sorted.length < 4) {
-    return [
-      { label: "Food Delivery", percent: "+34%", isWorse: true },
-      { label: "Subscriptions", percent: "+18%", isWorse: true },
-      { label: "Entertainment", percent: "-12%", isWorse: false },
-      { label: "Shopping", percent: "-8%", isWorse: false },
-    ];
-  }
-
-  // Split into two halves by index
-  const half = Math.floor(sorted.length / 2);
-  const firstHalf = sorted.slice(0, half);
-  const secondHalf = sorted.slice(half);
-
-  const categories: Array<{ key: "Food" | "Subscriptions" | "Entertainment" | "Shopping"; label: string }> = [
-    { key: "Food", label: "Food Delivery" },
-    { key: "Subscriptions", label: "Subscriptions" },
-    { key: "Entertainment", label: "Entertainment" },
-    { key: "Shopping", label: "Shopping" },
+  const categoryMeta: Array<{
+    key: string;
+    label: string;
+    highShare: boolean; // true = spending heavy = "worse" color
+  }> = [
+    { key: "Food", label: "Food Delivery", highShare: true },
+    { key: "Subscriptions", label: "Subscriptions", highShare: true },
+    { key: "Entertainment", label: "Entertainment", highShare: false },
+    { key: "Shopping", label: "Shopping", highShare: false },
   ];
 
-  return categories.map(({ key, label }) => {
-    const firstSum = firstHalf.filter(t => t.category === key).reduce((sum, t) => sum + Math.abs(t.amount), 0);
-    const secondSum = secondHalf.filter(t => t.category === key).reduce((sum, t) => sum + Math.abs(t.amount), 0);
-
-    let pctChange = 0;
-    if (firstSum > 0) {
-      pctChange = Math.round(((secondSum - firstSum) / firstSum) * 100);
-    } else if (secondSum > 0) {
-      pctChange = 25;
-    } else {
-      const fallbacks: Record<string, number> = {
-        Food: 15,
-        Subscriptions: 8,
-        Entertainment: -5,
-        Shopping: -12
+  return categoryMeta
+    .map(({ key, label, highShare }) => {
+      const amount = breakdown[key] ?? 0;
+      const share = Math.round((amount / total) * 100);
+      return {
+        label,
+        amount,
+        share,
+        // Warn (amber) when a high-spend category takes > 30% of total
+        isWorse: highShare && share > 30,
+        displayStr: `${share}%`,
       };
-      pctChange = fallbacks[key] || 0;
-    }
+    })
+    .filter((item) => item.amount > 0)
+    .sort((a, b) => b.share - a.share)
+    .slice(0, 4);
+}
 
-    if (pctChange > 200) pctChange = 200;
-    if (pctChange < -95) pctChange = -95;
-
-    if (pctChange === 0) {
-      pctChange = key === "Food" || key === "Subscriptions" ? 12 : -7;
-    }
-
-    const isWorse = pctChange > 0;
-    const percentStr = pctChange > 0 ? `+${pctChange}%` : `${pctChange}%`;
-
-    return {
-      label,
-      percent: percentStr,
-      isWorse,
-    };
-  });
+// Determine whether the chart has enough data to be meaningful
+function hasEnoughChartData(timeline: AnalysisStats["timeline"]): boolean {
+  return timeline.length >= 7; // at least 7 distinct dates
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -145,7 +119,14 @@ export default function Dashboard({
   const suggestedActionRaw = extractSection(report, "Suggested Action");
   const suggestedAction = suggestedActionRaw || aiInsight.suggestedActions[0] || "";
 
-  const behaviorChanges = deriveActualCategoryChanges(transactions);
+  // Show up to 4 signals
+  const displaySignals = stats.signals.slice(0, 4);
+
+  // Category spending distribution (share-based, not MoM delta)
+  const spendingDistribution = deriveSpendingDistribution(stats);
+
+  // Only show chart when there's enough time-series data
+  const shouldShowChart = hasEnoughChartData(stats.timeline);
 
   const lineSeriesKeys = ["Food", "Entertainment", "Shopping", "Subscriptions"];
   const chartColors: Record<string, string> = {
@@ -349,19 +330,19 @@ export default function Dashboard({
       </motion.div>
 
       {/* ── Section 3: Behavioral Signals ── */}
-      {stats.signals.length > 0 && (
+      {displaySignals.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono uppercase tracking-widest text-gray-500">
               Behavioral Signals
             </span>
             <span className="text-[10px] font-mono text-gray-600">
-              {stats.signals.length} detected
+              {displaySignals.length} detected
             </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {stats.signals.map((sig, idx) => {
+            {displaySignals.map((sig, idx) => {
               const impactText = getImpactLabel(sig.impact);
               const accent = getImpactAccent(sig.impact);
               return (
@@ -401,8 +382,8 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* ── Section 4: Behavior Changes ── */}
-      {behaviorChanges.length > 0 && (
+      {/* ── Section 4: Spending Breakdown ── */}
+      {spendingDistribution.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -410,125 +391,136 @@ export default function Dashboard({
           className="glass-panel p-6 rounded-3xl border border-white/10 flex flex-col gap-5 relative overflow-hidden"
         >
           <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full blur-3xl pointer-events-none" />
-          <span className="text-xs font-mono uppercase tracking-widest text-gray-500">
-            Behavior Changes
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-mono uppercase tracking-widest text-gray-500">
+              Spending Breakdown
+            </span>
+            <span className="text-[10px] font-mono text-gray-500">
+              % of total spend
+            </span>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-            {behaviorChanges.map((item, idx) => (
+            {spendingDistribution.map((item, idx) => (
               <motion.div
                 key={idx}
                 initial={{ opacity: 0, x: 8 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.07 * idx }}
-                className="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all duration-300"
+                className="flex flex-col gap-2 p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all duration-300"
               >
-                <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
                   <span className="text-[9px] font-mono uppercase tracking-widest text-gray-500">Category</span>
-                  <span className="text-sm font-bold text-white">{item.label}</span>
+                  <span
+                    className={`text-base font-black font-mono ${
+                      item.isWorse ? "text-brand-warning" : "text-brand-success"
+                    }`}
+                  >
+                    {item.displayStr}
+                  </span>
                 </div>
-                <span
-                  className={`flex items-center gap-1 text-base font-black font-mono ${
-                    item.isWorse ? "text-brand-warning" : "text-brand-success"
-                  }`}
-                >
-                  {item.isWorse ? (
-                    <ArrowUp className="w-4 h-4" />
-                  ) : (
-                    <ArrowDown className="w-4 h-4" />
-                  )}
-                  {item.percent}
-                </span>
+                <span className="text-sm font-bold text-white">{item.label}</span>
+                {/* Mini progress bar */}
+                <div className="w-full h-1 rounded-full bg-white/5 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${
+                      item.isWorse ? "bg-brand-warning/60" : "bg-brand-success/60"
+                    }`}
+                    style={{ width: `${Math.min(item.share * 2, 100)}%` }}
+                  />
+                </div>
               </motion.div>
             ))}
           </div>
         </motion.div>
       )}
 
-      {/* ── Section 5: Spending Trend Chart ── */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.25 }}
-        className="glass-panel p-6 rounded-3xl border border-white/10 space-y-5 relative overflow-hidden"
-      >
-        <div className="absolute top-0 right-0 w-48 h-48 bg-brand-secondary/5 rounded-full blur-3xl pointer-events-none" />
+      {/* ── Section 5: Spending Trend Chart (only when ≥ 7 distinct dates) ── */}
+      {shouldShowChart && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+          className="glass-panel p-6 rounded-3xl border border-white/10 space-y-5 relative overflow-hidden"
+        >
+          <div className="absolute top-0 right-0 w-48 h-48 bg-brand-secondary/5 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <span className="text-xs font-mono uppercase tracking-widest text-gray-500">
-            Spending Trend
-          </span>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setSelectedCategory("All")}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-mono font-bold uppercase tracking-wider transition duration-200 ${
-                selectedCategory === "All"
-                  ? "bg-brand-primary text-white border border-brand-primary"
-                  : "bg-white/5 text-gray-400 hover:text-white border border-white/5"
-              }`}
-            >
-              All
-            </button>
-            {lineSeriesKeys.map((k) => (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span className="text-xs font-mono uppercase tracking-widest text-gray-500">
+              Spending Trend
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                key={k}
-                onClick={() => setSelectedCategory(k)}
+                onClick={() => setSelectedCategory("All")}
                 className={`px-3 py-1.5 rounded-lg text-[10px] font-mono font-bold uppercase tracking-wider transition duration-200 ${
-                  selectedCategory === k
-                    ? "bg-white/90 text-brand-bg border border-white"
+                  selectedCategory === "All"
+                    ? "bg-brand-primary text-white border border-brand-primary"
                     : "bg-white/5 text-gray-400 hover:text-white border border-white/5"
                 }`}
-                style={{ color: selectedCategory === k ? undefined : chartColors[k] }}
               >
-                {k}
+                All
               </button>
-            ))}
+              {lineSeriesKeys.map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setSelectedCategory(k)}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-mono font-bold uppercase tracking-wider transition duration-200 ${
+                    selectedCategory === k
+                      ? "bg-white/90 text-brand-bg border border-white"
+                      : "bg-white/5 text-gray-400 hover:text-white border border-white/5"
+                  }`}
+                  style={{ color: selectedCategory === k ? undefined : chartColors[k] }}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
 
-        <div className="w-full h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={stats.timeline} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <defs>
-                {lineSeriesKeys.map((k) => (
-                  <linearGradient key={k} id={`grad_${k}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={chartColors[k]} stopOpacity={0.4} />
-                    <stop offset="95%" stopColor={chartColors[k]} stopOpacity={0.0} />
-                  </linearGradient>
-                ))}
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
-              <XAxis dataKey="date" stroke="#6b7280" fontSize={10} tickLine={false} axisLine={false} />
-              <YAxis stroke="#6b7280" fontSize={10} tickLine={false} axisLine={false} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "#0B1020",
-                  borderColor: "rgba(255,255,255,0.1)",
-                  borderRadius: "12px",
-                  color: "#ffffff",
-                  fontSize: "11px",
-                  fontFamily: "var(--font-mono)",
-                }}
-              />
-              {lineSeriesKeys.map((k) => {
-                if (selectedCategory !== "All" && selectedCategory !== k) return null;
-                return (
-                  <Area
-                    key={k}
-                    type="monotone"
-                    dataKey={k}
-                    stroke={chartColors[k]}
-                    strokeWidth={2.5}
-                    fillOpacity={1}
-                    fill={`url(#grad_${k})`}
-                    activeDot={{ r: 5 }}
-                    animationDuration={1200}
-                  />
-                );
-              })}
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </motion.div>
+          <div className="w-full h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={stats.timeline} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                <defs>
+                  {lineSeriesKeys.map((k) => (
+                    <linearGradient key={k} id={`grad_${k}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={chartColors[k]} stopOpacity={0.4} />
+                      <stop offset="95%" stopColor={chartColors[k]} stopOpacity={0.0} />
+                    </linearGradient>
+                  ))}
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
+                <XAxis dataKey="date" stroke="#6b7280" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis stroke="#6b7280" fontSize={10} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#0B1020",
+                    borderColor: "rgba(255,255,255,0.1)",
+                    borderRadius: "12px",
+                    color: "#ffffff",
+                    fontSize: "11px",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                />
+                {lineSeriesKeys.map((k) => {
+                  if (selectedCategory !== "All" && selectedCategory !== k) return null;
+                  return (
+                    <Area
+                      key={k}
+                      type="monotone"
+                      dataKey={k}
+                      stroke={chartColors[k]}
+                      strokeWidth={2.5}
+                      fillOpacity={1}
+                      fill={`url(#grad_${k})`}
+                      activeDot={{ r: 5 }}
+                      animationDuration={1200}
+                    />
+                  );
+                })}
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }
